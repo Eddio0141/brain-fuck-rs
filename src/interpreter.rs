@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::Display,
     io::{self, Read, Stdin, Stdout, Write},
     num::Wrapping,
@@ -8,14 +9,14 @@ use std::{
 pub struct Interpreter {
     commands: Vec<Command>,
     program_counter: usize,
-    bracket_depth: usize,
     pointer: usize,
     cells: Vec<Wrapping<u8>>,
     config: Config,
+    jump_cache: HashMap<usize, usize>,
 }
 
 impl Interpreter {
-    pub fn new(commands: &str, config: Config) -> Self {
+    pub fn new(commands: &str, config: Config) -> Result<Self, InterpreterError> {
         let commands = commands
             .chars()
             .filter_map(|ch| match ch {
@@ -31,11 +32,96 @@ impl Interpreter {
             })
             .collect::<Vec<_>>();
 
-        Self {
+        let jump_cache = {
+            let mut depth: usize = 0;
+            let jump_cache = commands
+                .iter()
+                .enumerate()
+                .filter_map(|(i, cmd)| {
+                    if matches!(cmd, Command::JumpPastIfZero) {
+                        depth += 1;
+
+                        let right_bracket = {
+                            let mut brackets =
+                                commands[i + 1..].iter().enumerate().filter_map(|(i, cmd)| {
+                                    if matches!(cmd, Command::JumpBackIfNonZero)
+                                        || matches!(cmd, Command::JumpPastIfZero)
+                                    {
+                                        Some(i)
+                                    } else {
+                                        None
+                                    }
+                                });
+
+                            let mut depth_calc = depth;
+
+                            brackets.find(|index| {
+                                let cmd = &commands[*index + i + 1];
+                                if matches!(cmd, Command::JumpBackIfNonZero) {
+                                    depth_calc -= 1;
+                                } else if matches!(cmd, Command::JumpPastIfZero) {
+                                    depth_calc += 1;
+                                }
+                                depth_calc < depth
+                            })
+                        };
+
+                        match right_bracket {
+                            Some(right_bracket) => Some(Ok((i, right_bracket + i + 2))),
+                            None => Some(Err(InterpreterError::RightBracketNotFound(i))),
+                        }
+                    } else if matches!(cmd, Command::JumpBackIfNonZero) {
+                        let left_bracket = {
+                            let brackets =
+                                commands[..i - 1].iter().enumerate().filter_map(|(i, cmd)| {
+                                    if matches!(cmd, Command::JumpBackIfNonZero)
+                                        || matches!(cmd, Command::JumpPastIfZero)
+                                    {
+                                        Some(i)
+                                    } else {
+                                        None
+                                    }
+                                });
+
+                            let mut depth_calc = depth;
+
+                            brackets.rev().find(|index| {
+                                let cmd = &commands[*index];
+                                if matches!(cmd, Command::JumpBackIfNonZero) {
+                                    depth_calc += 1;
+                                } else if matches!(cmd, Command::JumpPastIfZero) {
+                                    depth_calc -= 1;
+                                }
+                                depth_calc < depth
+                            })
+                        };
+
+                        depth -= 1;
+
+                        match left_bracket {
+                            Some(left_bracket) => Some(Ok((i, left_bracket + 1))),
+                            None => Some(Err(InterpreterError::LeftBracketNotFound(i))),
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Result<HashMap<_, _>, InterpreterError>>();
+
+            match jump_cache {
+                Ok(jump_cache) => jump_cache,
+                Err(err) => return Err(err),
+            }
+        };
+
+        println!("{:#?}", jump_cache);
+
+        Ok(Self {
             commands,
             config,
+            jump_cache,
             ..Default::default()
-        }
+        })
     }
 
     pub fn run(&mut self) -> Result<Duration, InterpreterError> {
@@ -86,97 +172,26 @@ impl Interpreter {
                     }
                     self.program_counter += 1;
                 }
-                Command::JumpPastIfZero => {
-                    self.bracket_depth += 1;
-
-                    let right_bracket = {
-                        let brackets = &mut self.commands[self.program_counter + 1..]
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, cmd)| {
-                                if matches!(cmd, Command::JumpBackIfNonZero)
-                                    || matches!(cmd, Command::JumpPastIfZero)
-                                {
-                                    Some(i)
-                                } else {
-                                    None
-                                }
-                            });
-
-                        let mut depth = self.bracket_depth;
-
-                        brackets.find(|index| {
-                            let cmd = &self.commands[*index + self.program_counter + 1];
-                            if matches!(cmd, Command::JumpBackIfNonZero) {
-                                depth -= 1;
-                            } else if matches!(cmd, Command::JumpPastIfZero) {
-                                depth += 1;
-                            }
-                            depth < self.bracket_depth
-                        })
-                    };
-
-                    match right_bracket {
-                        Some(mut right_bracket) => {
-                            right_bracket += self.program_counter + 1;
-                            if self.cells[self.pointer] == Wrapping(0) {
-                                self.program_counter = right_bracket;
-                            } else {
-                                self.program_counter += 1;
-                            }
-                        }
-                        None => {
-                            return Err(InterpreterError::RightBracketNotFound(
-                                self.program_counter,
-                            ));
+                Command::JumpPastIfZero => match self.jump_cache.get(&self.program_counter) {
+                    Some(right_bracket) => {
+                        if self.cells[self.pointer] == Wrapping(0) {
+                            self.program_counter = *right_bracket;
+                        } else {
+                            self.program_counter += 1;
                         }
                     }
-                }
-                Command::JumpBackIfNonZero => {
-                    let left_bracket = {
-                        let brackets = &mut self.commands[..self.program_counter - 1]
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, cmd)| {
-                                if matches!(cmd, Command::JumpBackIfNonZero)
-                                    || matches!(cmd, Command::JumpPastIfZero)
-                                {
-                                    Some(i)
-                                } else {
-                                    None
-                                }
-                            });
-
-                        let mut depth = self.bracket_depth;
-
-                        brackets.rev().find(|index| {
-                            let cmd = &self.commands[*index];
-                            if matches!(cmd, Command::JumpBackIfNonZero) {
-                                depth += 1;
-                            } else if matches!(cmd, Command::JumpPastIfZero) {
-                                depth -= 1;
-                            }
-                            depth < self.bracket_depth
-                        })
-                    };
-
-                    match left_bracket {
-                        Some(left_bracket) => {
-                            if self.cells[self.pointer] != Wrapping(0) {
-                                self.program_counter = left_bracket;
-                            } else {
-                                self.program_counter += 1;
-                            }
-                        }
-                        None => {
-                            return Err(InterpreterError::LeftBracketNotFound(
-                                self.program_counter,
-                            ));
+                    None => unreachable!(),
+                },
+                Command::JumpBackIfNonZero => match self.jump_cache.get(&self.program_counter) {
+                    Some(left_bracket) => {
+                        if self.cells[self.pointer] != Wrapping(0) {
+                            self.program_counter = *left_bracket;
+                        } else {
+                            self.program_counter += 1;
                         }
                     }
-
-                    self.bracket_depth -= 1;
-                }
+                    None => unreachable!(),
+                },
             }
             // println!("{:?} took {:#?}", command, before_exec.elapsed());
         }
@@ -193,11 +208,12 @@ impl Default for Interpreter {
             cells: vec![Wrapping(0); 30000],
             program_counter: 0,
             config: Default::default(),
-            bracket_depth: 0,
+            jump_cache: HashMap::new(),
         }
     }
 }
 
+#[derive(Debug)]
 pub enum InterpreterError {
     RightBracketNotFound(usize),
     LeftBracketNotFound(usize),

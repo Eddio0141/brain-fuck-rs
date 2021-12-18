@@ -42,28 +42,21 @@ impl Interpreter {
                         depth += 1;
 
                         let right_bracket = {
-                            let mut brackets =
-                                commands[i + 1..].iter().enumerate().filter_map(|(i, cmd)| {
-                                    if matches!(cmd, Command::JumpBackIfNonZero)
-                                        || matches!(cmd, Command::JumpPastIfZero)
-                                    {
-                                        Some(i)
-                                    } else {
-                                        None
-                                    }
-                                });
-
                             let mut depth_calc = depth;
 
-                            brackets.find(|index| {
-                                let cmd = &commands[*index + i + 1];
-                                if matches!(cmd, Command::JumpBackIfNonZero) {
-                                    depth_calc -= 1;
-                                } else if matches!(cmd, Command::JumpPastIfZero) {
-                                    depth_calc += 1;
-                                }
-                                depth_calc < depth
-                            })
+                            commands[i + 1..]
+                                .iter()
+                                .enumerate()
+                                .find(|(_, cmd)| {
+                                    if matches!(cmd, Command::JumpBackIfNonZero) {
+                                        depth_calc -= 1;
+                                    } else if matches!(cmd, Command::JumpPastIfZero) {
+                                        depth_calc += 1;
+                                    }
+
+                                    depth_calc < depth
+                                })
+                                .map(|(i, _)| i)
                         };
 
                         match right_bracket {
@@ -72,28 +65,22 @@ impl Interpreter {
                         }
                     } else if matches!(cmd, Command::JumpBackIfNonZero) {
                         let left_bracket = {
-                            let brackets =
-                                commands[..i - 1].iter().enumerate().filter_map(|(i, cmd)| {
-                                    if matches!(cmd, Command::JumpBackIfNonZero)
-                                        || matches!(cmd, Command::JumpPastIfZero)
-                                    {
-                                        Some(i)
-                                    } else {
-                                        None
-                                    }
-                                });
-
                             let mut depth_calc = depth;
 
-                            brackets.rev().find(|index| {
-                                let cmd = &commands[*index];
-                                if matches!(cmd, Command::JumpBackIfNonZero) {
-                                    depth_calc += 1;
-                                } else if matches!(cmd, Command::JumpPastIfZero) {
-                                    depth_calc -= 1;
-                                }
-                                depth_calc < depth
-                            })
+                            commands[..i - 1]
+                                .iter()
+                                .enumerate()
+                                .rev()
+                                .find(|(_, cmd)| {
+                                    if matches!(cmd, Command::JumpBackIfNonZero) {
+                                        depth_calc += 1;
+                                    } else if matches!(cmd, Command::JumpPastIfZero) {
+                                        depth_calc -= 1;
+                                    }
+
+                                    depth_calc < depth
+                                })
+                                .map(|(i, _)| i)
                         };
 
                         depth -= 1;
@@ -113,8 +100,6 @@ impl Interpreter {
                 Err(err) => return Err(err),
             }
         };
-
-        println!("{:#?}", jump_cache);
 
         Ok(Self {
             commands,

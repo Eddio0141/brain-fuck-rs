@@ -30,8 +30,9 @@ fn main() {
             Arg::with_name("showDuration")
                 .short("d")
                 .long("showDuration")
-                .value_name("OPTIONS")
+                .takes_value(false)
                 .case_insensitive(true)
+                // .takes_value(false)
                 .help("Prints the duration it took to run the interpreter"),
         )
         .get_matches();

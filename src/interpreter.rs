@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    error::Error,
     fmt::Display,
     io::{self, Read, Stdin, Stdout, Write},
     num::Wrapping,
@@ -11,12 +12,12 @@ pub struct Interpreter {
     program_counter: usize,
     pointer: usize,
     cells: Vec<Wrapping<u8>>,
-    config: Config,
+    config: InterpreterConfig,
     jump_cache: HashMap<usize, usize>,
 }
 
 impl Interpreter {
-    pub fn new(commands: &str, config: Config) -> Result<Self, InterpreterError> {
+    pub fn new(commands: &str, config: InterpreterConfig) -> Result<Self, InterpreterError> {
         let commands = commands
             .chars()
             .filter_map(|ch| match ch {
@@ -109,7 +110,7 @@ impl Interpreter {
         })
     }
 
-    pub fn run(&mut self) -> Result<Duration, InterpreterError> {
+    pub fn run(&mut self) -> Result<InterpreterResult, InterpreterError> {
         let mut stdout_handle = self.config.stdout().lock();
         let mut stdin_handle = self.config.stdin().lock();
         let mut stdin_buff = [0; 1];
@@ -126,7 +127,6 @@ impl Interpreter {
             //     "program counter {}: executing {:?}. cell {} has a value {}",
             //     self.program_counter, command, self.pointer, self.cells[self.pointer]
             // );
-            // let before_exec = Instant::now();
             match command {
                 Command::PointerIncrease => {
                     self.pointer += 1;
@@ -181,7 +181,9 @@ impl Interpreter {
             // println!("{:?} took {:#?}", command, before_exec.elapsed());
         }
 
-        Ok(before_exec.elapsed())
+        Ok(InterpreterResult {
+            execution_time: before_exec.elapsed(),
+        })
     }
 }
 
@@ -203,6 +205,8 @@ pub enum InterpreterError {
     RightBracketNotFound(usize),
     LeftBracketNotFound(usize),
 }
+
+impl Error for InterpreterError {}
 
 impl Display for InterpreterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -233,12 +237,12 @@ pub enum Command {
     JumpBackIfNonZero,
 }
 
-pub struct Config {
+pub struct InterpreterConfig {
     stdout: Stdout,
     stdin: Stdin,
 }
 
-impl Config {
+impl InterpreterConfig {
     /// Get a reference to the config's stdout.
     pub fn stdout(&self) -> &Stdout {
         &self.stdout
@@ -250,11 +254,22 @@ impl Config {
     }
 }
 
-impl Default for Config {
+impl Default for InterpreterConfig {
     fn default() -> Self {
         Self {
             stdout: io::stdout(),
             stdin: io::stdin(),
         }
+    }
+}
+
+pub struct InterpreterResult {
+    execution_time: Duration,
+}
+
+impl InterpreterResult {
+    /// Get a reference to the interpreter result's execution time.
+    pub fn execution_time(&self) -> Duration {
+        self.execution_time
     }
 }
